@@ -10,9 +10,9 @@ typedef struct Item {
 	const char* NAME;
 	const char* CATEGORY;
 	float PRICE;
-	int ID;
-	int CAPACITY;
-	int UNITS;
+	const int ID;
+	float CAPACITY;
+	float UNITS;
 };
 
 class SQLDatabase {
@@ -31,11 +31,11 @@ private:
 		exit = sqlite3_exec(DBhandle, query.c_str(), cb, 0, &messageError);
 		return exit;
 	}
-	bool isNumber(const char* input) {
+	float isNumber(const char* input) {
 		for (int i = 0; input[i] != '\0'; i++) {
-			if (!(isdigit(input[i])) && input[i] != '.') return false;
+			if (!(isdigit(input[i])) && input[i] != '.') return -1;
 		}
-		return true;
+		return std::stof(input);
 	}
 public: 
 	int createDB() {
@@ -48,12 +48,12 @@ public:
 	int createTable() {
 		sqlite3* DBhandle;
 		std::string query = "CREATE TABLE items ("
-			"ID integer primary key,"
-			"NAME text,"
-			"UNITS integer,"
-			"PRICE float,"
-			"CAPACITY integer,"
-			"CATEGORY text)";
+			"ID integer PRIMARY KEY,"
+			"NAME TEXT,"
+			"UNITS INT,"
+			"PRICE INT,"
+			"CAPACITY INT,"
+			"CATEGORY TEXT)";
 
 		try {
 			char* messageError = (char*)malloc(128);
@@ -63,8 +63,6 @@ public:
 				std::cerr << "Error creating table" << std::endl;
 				sqlite3_free(messageError);
 			}
-			else
-				std::cout << "Successfully created table!" << std::endl;
 		}
 		catch (const std::exception& e) {
 			std::cerr << e.what();
@@ -87,7 +85,7 @@ public:
 		sqlite3_bind_int(sqlStmt, 1, record->ID);
 		sqlite3_bind_text(sqlStmt, 2, record->NAME, -1, NULL);
 		sqlite3_bind_int(sqlStmt, 3, record->UNITS);
-		sqlite3_bind_double(sqlStmt, 4, record->PRICE);
+		sqlite3_bind_int(sqlStmt, 4, record->PRICE);
 		sqlite3_bind_int(sqlStmt, 5, record->CAPACITY);
 		sqlite3_bind_text(sqlStmt, 6, record->CATEGORY, -1, NULL);
 
@@ -108,26 +106,21 @@ public:
 		return 0;
 	}
 
-	int updateRecord(const char *tfield, const char* newval, const char *cond, const char *condval) {
+	int updateUnit(float newval, const char* condval) {
 		char* messageError;
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "UPDATE items SET ?1 = ?2 WHERE ?3 = ?4;";
+		std::string query = "UPDATE items SET UNITS = ?2 WHERE NAME = ?4;";
 		exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
-
 		if (exit != SQLITE_OK) {
 			sqlite3_close(DBhandle);
-			std::cout << "failed to prepare statment\n";
+			std::cout << "failed to prepare statment";
 			return -1;
 		}
-		sqlite3_bind_text(sqlStmt, 1, tfield, -1, NULL);
-		if (isNumber(newval)) sqlite3_bind_int(sqlStmt, 2, int(newval));
-		else sqlite3_bind_text(sqlStmt, 2, newval, -1, NULL);
-		
-		sqlite3_bind_text(sqlStmt, 3, cond, -1, NULL);
-		if (isNumber(condval)) sqlite3_bind_int(sqlStmt, 4, int(condval));
-		else sqlite3_bind_text(sqlStmt, 4, condval, -1, NULL);
+
+		sqlite3_bind_int(sqlStmt, 2, newval);
+		sqlite3_bind_text(sqlStmt, 4, condval, -1, NULL);
 
 		exit = sqlite3_step(sqlStmt);
 		if (exit != SQLITE_DONE) {
@@ -139,7 +132,7 @@ public:
 		return 0;
 	}
 
-	int removeRecord() {
+	int dropTable() {
 		char* messageError = (char*)malloc(1024);
 		std::string query("DROP TABLE items;");
 		int exit = queryDB(query, callback, messageError);
@@ -149,12 +142,12 @@ public:
 
 int main() {
 	SQLDatabase Inventory;
-	Item item = { "weed", "drug", 7.00, 3, 1000, 31 };
+	Item item = { "weed", "drug", 7.00, 3, 1000, 31.1 };
 	//Inventory.createTable();
 	//Inventory.insertRecord(&item);
+	//Inventory.showAllRecords();
+	Inventory.updateUnit(100, "weed");
 	Inventory.showAllRecords();
-	Inventory.updateRecord("UNITS", "112", "NAME", "weed");
-	Inventory.showAllRecords();
-	//Inventory.removeRecord();
+	//Inventory.dropTable();
 	return 0;
 }
