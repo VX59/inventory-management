@@ -106,21 +106,23 @@ public:
 		return 0;
 	}
 
-	int updateUnit(float newval, const char* condval) {
+	int updateUnit(int newval, const char* condval, bool incr = false) {
 		char* messageError;
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "UPDATE items SET UNITS = ?2 WHERE NAME = ?4;";
-		exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
+		std::string query = "UPDATE items SET UNITS = ?1 WHERE NAME = ?2;";
+		std::string incr_query = "UPDATE items SET UNITS = UNITS + ?1 WHERE NAME = ?2";
+		if(incr == true) exit = sqlite3_prepare_v2(DBhandle, incr_query.c_str(), incr_query.size() + 1, &sqlStmt, nullptr);
+		else exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
+
 		if (exit != SQLITE_OK) {
 			sqlite3_close(DBhandle);
 			std::cout << "failed to prepare statment";
 			return -1;
 		}
-
-		sqlite3_bind_int(sqlStmt, 2, newval);
-		sqlite3_bind_text(sqlStmt, 4, condval, -1, NULL);
+		sqlite3_bind_int(sqlStmt, 1, newval);
+		sqlite3_bind_text(sqlStmt, 2, condval, -1, NULL);
 
 		exit = sqlite3_step(sqlStmt);
 		if (exit != SQLITE_DONE) {
@@ -129,6 +131,7 @@ public:
 			return -1;
 		}
 		sqlite3_finalize(sqlStmt);
+
 		return 0;
 	}
 
@@ -146,7 +149,7 @@ int main() {
 	//Inventory.createTable();
 	//Inventory.insertRecord(&item);
 	//Inventory.showAllRecords();
-	Inventory.updateUnit(100, "weed");
+	Inventory.updateUnit(-25, "weed", true);
 	Inventory.showAllRecords();
 	//Inventory.dropTable();
 	return 0;
