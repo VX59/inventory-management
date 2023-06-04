@@ -1,4 +1,5 @@
 #define FMT_HEADER_ONLY
+
 #include <stdio.h>
 #include <iostream>
 #include <iomanip>
@@ -13,17 +14,24 @@ class SQLDatabase {
 public:
 	const char* wd = "C:\Users\deros\Documents\Database";
 	static int callback(void* NotUsed, int argc, char** argv, char** asColName) {
-		for (int i = 0; i < argc; i++) {
-			std::cout << fmt::format("|{}: {:<{}}", asColName[i], argv[i], 12);
+		for (int i = 0; i < argc; i++) 
+		{
+			std::string value;
+			if (argv[i] == nullptr)
+					value = "";
+			else
+				value = argv[i];
+
+				std::cout << fmt::format("|{}: {:<{}}", asColName[i], value, 12);
 		}
 		std::cout << std::endl;
 		return 0;
 	}
-	static void validatePrepareStmt(int ret, sqlite3 *DBhandle) {
+	static void validatePrepareStmt(int ret, sqlite3* DBhandle) {
 		if (ret != SQLITE_OK) {
 			sqlite3_close(DBhandle);
 			std::cerr << "failed to prepare statment" << ret << std::endl;
-			exit(- 1);
+			exit(-1);
 		}
 	}
 	static void validatestep(int ret, sqlite3* DBhandle) {
@@ -37,6 +45,7 @@ public:
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
 		exit = sqlite3_exec(DBhandle, query.c_str(), cb, 0, &messageError);
+		sqlite3_close(DBhandle);
 		return exit;
 	}
 
@@ -47,7 +56,7 @@ public:
 		return 0;
 	}
 	int showAllRecords(std::string table) {
-		std::string query = "SELECT * FROM "+table+";";
+		std::string query = "SELECT * FROM " + table + ";";
 		int exit = queryDB(query, callback, NULL);
 		return 0;
 	}
@@ -56,7 +65,7 @@ public:
 		sqlite3* DBhandle;
 		sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "DELETE FROM "+table+" WHERE ID = ?1";
+		std::string query = "DELETE FROM " + table + " WHERE ID = ?1";
 		int exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		validatePrepareStmt(exit, DBhandle);
 		sqlite3_bind_int(sqlStmt, 1, id);
@@ -67,7 +76,7 @@ public:
 	}
 	int dropTable(std::string table) {
 		char* messageError = (char*)malloc(1024);
-		std::string query = "DROP TABLE "+table+";";
+		std::string query = "DROP TABLE " + table + ";";
 		int exit = queryDB(query, NULL, messageError);
 		return 0;
 	}
@@ -82,7 +91,7 @@ typedef struct Tcomponent {
 };
 
 typedef struct newTransaction {
-	Tcomponent*itemListHead;
+	Tcomponent* itemListHead;
 	int transactionid;
 	int storeid;
 	char* store;
@@ -98,7 +107,7 @@ typedef struct newTransaction {
 	float computeVolume() {
 		float total = 0;
 		Tcomponent* alpha = itemListHead;
-		while(alpha->next != nullptr) {
+		while (alpha->next != nullptr) {
 			total += alpha->itemprice;
 			alpha = alpha->next;
 		}
@@ -119,9 +128,9 @@ typedef struct newItem {
 
 class SQLInventory : SQLDatabase {
 public:
-	int createTable() {
+	int createTable(std::string name) {
 		sqlite3* DBhandle;
-		std::string query = "CREATE TABLE inventory ("
+		std::string query = "CREATE TABLE "+name+" ("
 			"ID integer PRIMARY KEY,"
 			"NAME TEXT,"
 			"UNITS INT,"
@@ -143,12 +152,12 @@ public:
 		}
 		return 0;
 	}
-	int insertRecord(newItem* record) {
+	int insertRecord(std::string table, newItem* record) {
 		char* messageError;
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "INSERT INTO inventory (ID, NAME, UNITS, PRICE, CAPACITY, CATEGORY) VALUES( ?1, ?2, ?3, ?4, ?5, ?6);";
+		std::string query = "INSERT INTO "+table+" (ID, NAME, UNITS, PRICE, CAPACITY, CATEGORY) VALUES( ?1, ?2, ?3, ?4, ?5, ?6);";
 		exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		validatePrepareStmt(exit, DBhandle);
 
@@ -162,15 +171,16 @@ public:
 		exit = sqlite3_step(sqlStmt);
 		validatestep(exit, DBhandle);
 		sqlite3_finalize(sqlStmt);
+		sqlite3_close(DBhandle);
 		return 0;
 	}
-	int updateUnit(int newval, const char* condval, bool incr = false) {
+	int updateUnit(std::string table, int newval, const char* condval, bool incr = false) {
 		char* messageError;
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "UPDATE inventory SET UNITS = ?1 WHERE NAME = ?2;";
-		std::string incr_query = "UPDATE inventory SET UNITS = UNITS + ?1 WHERE NAME = ?2";
+		std::string query = "UPDATE "+table+" SET UNITS = ?1 WHERE NAME = ?2;";
+		std::string incr_query = "UPDATE "+table+" SET UNITS = UNITS + ?1 WHERE NAME = ?2";
 		if (incr == true) exit = sqlite3_prepare_v2(DBhandle, incr_query.c_str(), incr_query.size() + 1, &sqlStmt, nullptr);
 		else exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		validatePrepareStmt(exit, DBhandle);
@@ -184,13 +194,13 @@ public:
 
 		return 0;
 	}
-	int updatePrice(float newval, const char* condval, bool incr = false) {
+	int updatePrice(std::string table, float newval, const char* condval, bool incr = false) {
 		char* messageError;
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "UPDATE inventory SET PRICE = ?1 WHERE NAME = ?2;";
-		std::string incr_query = "UPDATE inventory SET PRICE = UNITS + ?1 WHERE NAME = ?2";
+		std::string query = "UPDATE " + table + " SET PRICE = ?1 WHERE NAME = ?2;";
+		std::string incr_query = "UPDATE " + table + " SET PRICE = UNITS + ?1 WHERE NAME = ?2";
 		if (incr == true) exit = sqlite3_prepare_v2(DBhandle, incr_query.c_str(), incr_query.size() + 1, &sqlStmt, nullptr);
 		else exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		validatePrepareStmt(exit, DBhandle);
@@ -204,13 +214,13 @@ public:
 
 		return 0;
 	}
-	int updateCapacity(int newval, const char* condval, bool incr = false) {
+	int updateCapacity(std::string table, int newval, const char* condval, bool incr = false) {
 		char* messageError;
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "UPDATE inventory SET CAPACITY = ?1 WHERE NAME = ?2;";
-		std::string incr_query = "UPDATE inventory SET CAPACITY = UNITS + ?1 WHERE NAME = ?2";
+		std::string query = "UPDATE " + table + " SET CAPACITY = ?1 WHERE NAME = ?2;";
+		std::string incr_query = "UPDATE " + table + " SET CAPACITY = UNITS + ?1 WHERE NAME = ?2";
 		if (incr == true) exit = sqlite3_prepare_v2(DBhandle, incr_query.c_str(), incr_query.size() + 1, &sqlStmt, nullptr);
 		else exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		validatePrepareStmt(exit, DBhandle);
@@ -231,13 +241,13 @@ public:
 
 class SQLTransactions : SQLDatabase {
 public:
-	int createTable() {
+	int createTable(std::string name) {
 		sqlite3* DBhandle;
-		std::string query = "CREATE TABLE transactions ("
-			"ID INT PRIMARY KEY,"
+		std::string query = "CREATE TABLE "+name+" ("
+			"TCOUNT INTEGER PRIMARY KEY AUTOINCREMENT,"
+			"TID INT,"
 			"STORENAME TEXT,"
-			"STOREID INT"
-			"UNITS INT,"
+			"STOREID INT,"
 			"PRICE FLOAT)";
 
 		try {
@@ -255,47 +265,51 @@ public:
 		return 0;
 	}
 
-	int insertRecord(newTransaction *record) {
-		char messageError;
+	int insertRecord(const char* storeName, int storeID, int tID, Tcomponent* record) {
+		char* messageError;
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
-		Tcomponent *alpha = record->itemListHead;
-		while (alpha->next != nullptr) {
-			std::string itemName = alpha->itemName;
-			std::string query = "INSERT INTO transactions (ID, STORENAME, STOREID, UNITS, PRICE, " + itemName + ") VALUES(?1, ?2, ?3, ?4, ?5, ?6)";
-			std::cout << query << std::endl;
-			sqlite3_stmt* sqlStmt = nullptr;
-			exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
-			validatePrepareStmt(exit, DBhandle);
+		sqlite3_stmt* sqlStmt = nullptr;
+		std::string query = "INSERT INTO transactions (TID, STORENAME, STOREID, PRICE, "+ (std::string)record->itemName +") VALUES(?1, ?2, ?3, ?4, ?5);";
+		exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
+		validatePrepareStmt(exit, DBhandle);
 
-			sqlite3_bind_int(sqlStmt, 1, record->transactionid);
-			sqlite3_bind_text(sqlStmt, 2, record->store, -1, NULL);
-			sqlite3_bind_int(sqlStmt, 3, record->storeid);
-			sqlite3_bind_int(sqlStmt, 4, alpha->itemunits);
-			sqlite3_bind_int(sqlStmt, 5, alpha->itemprice);
-			sqlite3_bind_text(sqlStmt, 6, alpha->itemName, -1, NULL);
+		sqlite3_bind_int(sqlStmt, 1, tID);
+		sqlite3_bind_text(sqlStmt, 2, storeName, -1, NULL);
+		sqlite3_bind_int(sqlStmt, 3, storeID);
+		sqlite3_bind_double(sqlStmt, 4, record->itemprice);
+		sqlite3_bind_int(sqlStmt, 5, record->itemunits);
 
-			exit = sqlite3_step(sqlStmt);
-			validatestep(exit, DBhandle);
-			sqlite3_finalize(sqlStmt);
-
-			alpha = alpha->next;
-		}
+		exit = sqlite3_step(sqlStmt);
+		validatestep(exit, DBhandle);
+		sqlite3_finalize(sqlStmt);
+		sqlite3_close(DBhandle);
 		return 0;
 	}
 
 	int updateTransactionCols() {
-		char* messageError = (char*)malloc(64);
+		char* messageError = (char*)malloc(32);
 		sqlite3* DBhandle;
-		sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "SELECT NAME FROM inventory";
+		std::string query = "SELECT * FROM store_inventory";
+		sqlite3_open(wd, &DBhandle);
 		int exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		validatePrepareStmt(exit, DBhandle);
-		while (exit = sqlite3_step(sqlStmt) != SQLITE_DONE) {
-			std::string name = (const char*)sqlite3_column_text(sqlStmt, 0);
-			std::string query = "ALTER transactions ADD" + name + " TEXT;";
-			exit = sqlite3_exec(DBhandle, query.c_str(), NULL, 0, &messageError);
+
+		while (sqlite3_step(sqlStmt) == SQLITE_ROW) {
+			std::string colName = (const char*)sqlite3_column_text(sqlStmt, 1);
+			query = "ALTER TABLE transactions ADD " + colName + " INT; ";
+			exit = sqlite3_exec(DBhandle, query.c_str(), callback, 0, &messageError);
+			//std::cout << colName << std::endl;
+		}
+		sqlite3_finalize(sqlStmt);
+
+		query = "pragma table_info('transactions');";
+		exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
+		validatePrepareStmt(exit, DBhandle);
+
+		while (sqlite3_step(sqlStmt) != SQLITE_DONE) {
+			std::string tableName = (const char*)sqlite3_column_text(sqlStmt, 1);
 		}
 		sqlite3_finalize(sqlStmt);
 		return 0;
@@ -334,7 +348,7 @@ protected:
 	public:
 		std::mutex mtx;
 		void enqueue(struct restock_request* request) {
-			Node *NewNode = (Node*)malloc(sizeof(Node));
+			Node* NewNode = (Node*)malloc(sizeof(Node));
 			NewNode->request = request;
 			NewNode->weight = request->weight;
 			if (head == nullptr) {
@@ -378,13 +392,13 @@ class Store : SQLInventory, SQLTransactions, Warehouse {
 	float weight = 1.0;
 	float* location;
 	Warehouse supplier;
-	SQLInventory Inventory;
-	SQLTransactions StoreTransactions;
-	enum warehouse_request_type {UPDATE, SELECT};
-	
+	enum warehouse_request_type { UPDATE, SELECT };
+
 	float compute_weight(); // softmax algorithm?
 
 public:
+	SQLInventory Inventory;
+	SQLTransactions StoreTransactions;
 	// optional user interface, automatic triggered once a day
 	restock_request* create_restock_request() {
 		// access the store inventory
@@ -397,9 +411,15 @@ public:
 		supplier.Requests.enqueue(request);
 		return 0;
 	}
-	int local_transaction(newTransaction *record) {
-		//updateTransactionCols();
-		StoreTransactions.insertRecord(record);
+	int local_transaction(newTransaction* record) {
+		StoreTransactions.updateTransactionCols();
+		Tcomponent* alpha = record->itemListHead;	
+		while (alpha != nullptr) {
+			// modify the store inventory
+			Inventory.updateUnit("store_inventory", -(alpha->itemunits), alpha->itemName, true);
+			StoreTransactions.insertRecord(record->store, record->storeid, record->transactionid, alpha);
+			alpha = alpha->next;
+		}
 		return 0;
 	}
 };
@@ -408,12 +428,12 @@ int main() {
 	newItem itema = { "iron", "metal", 15.00, 1, 5000, 1310 };
 	newItem itemb = { "platinum", "metal", 15.00, 2, 500, 140 };
 	newItem itemc = { "aluminum", "metal", 15.00, 3, 500, 10 };
-	
+
 	Tcomponent Tcmpc = { 6, 15.00, 3, "aluminum", nullptr };
 	Tcomponent Tcmpb = { 15, 15.00, 2, "platinum", &Tcmpc };
 	Tcomponent Tcmpa = { 5, 15.00, 1, "iron", &Tcmpb };
 
-	newTransaction Transaction = { &Tcmpa,0, 0, (char*)"slave auction" };
+	newTransaction Transaction = { &Tcmpa, 0, 0, (char*)"tyrant" };
 
 	SQLDatabase database;
 	//database.dropTable("items");
@@ -421,12 +441,21 @@ int main() {
 	Store store;
 	SQLTransactions TCluster;
 	//inventory.createTable();
-	//inventory.insertRecord(&itema);
-	//inventory.insertRecord(&itemb);
-	//inventory.insertRecord(&itemc);
+
 	//inventory.showAll();
-	//TCluster.createTable();
+	//database.dropTable("transactions");
+	//TCluster.createTable("transactions");
+	//store.Inventory.createTable("store_inventory");
+
+	//store.Inventory.insertRecord("store_inventory", &itema);
+	//store.Inventory.insertRecord("store_inventory", &itemb);
+	//store.Inventory.insertRecord("store_inventory", &itemc);
+	database.showAllRecords("store_inventory");
+
 	store.local_transaction(&Transaction);
-	TCluster.showAll();
+	database.showAllRecords("transactions");
+
+	database.showAllRecords("store_inventory");
+
 	return 0;
 }
