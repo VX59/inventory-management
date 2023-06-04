@@ -1,5 +1,5 @@
 #define FMT_HEADER_ONLY
-
+#define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <iostream>
 #include <iomanip>
@@ -125,6 +125,29 @@ typedef struct newItem {
 	float CAPACITY;
 	float UNITS;
 };
+typedef struct restock_request {
+	typedef struct component {
+		const char* item_name;
+		int units;
+		component* next;
+	};
+	struct component* itemListHead = nullptr;
+
+	int CreateComponent(const char* item_name, int units) {
+		component *cmpnt = (component*)malloc(sizeof(component));
+		cmpnt->item_name = item_name;
+		cmpnt->units = units;
+		if (itemListHead == nullptr) itemListHead = cmpnt;
+		else {
+			cmpnt->next = itemListHead;
+			itemListHead = cmpnt;
+		}
+		return 0;
+	}
+	int max_components = 10;
+	std::string store;
+	float weight;
+};
 
 class SQLInventory : SQLDatabase {
 public:
@@ -248,7 +271,8 @@ public:
 			"TID INT,"
 			"STORENAME TEXT,"
 			"STOREID INT,"
-			"PRICE FLOAT)";
+			"PRICE FLOAT,"
+			"UNITS INT)";
 
 		try {
 			char* messageError = (char*)malloc(64);
@@ -270,7 +294,7 @@ public:
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "INSERT INTO transactions (TID, STORENAME, STOREID, PRICE, "+ (std::string)record->itemName +") VALUES(?1, ?2, ?3, ?4, ?5);";
+		std::string query = "INSERT INTO transactions (TID, STORENAME, STOREID, PRICE, UNITS, "+ (std::string)record->itemName +") VALUES(?1, ?2, ?3, ?4, ?5, ?6);";
 		exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		validatePrepareStmt(exit, DBhandle);
 
@@ -279,6 +303,7 @@ public:
 		sqlite3_bind_int(sqlStmt, 3, storeID);
 		sqlite3_bind_double(sqlStmt, 4, record->itemprice);
 		sqlite3_bind_int(sqlStmt, 5, record->itemunits);
+		sqlite3_bind_int(sqlStmt, 6, 1);
 
 		exit = sqlite3_step(sqlStmt);
 		validatestep(exit, DBhandle);
@@ -326,16 +351,6 @@ class Warehouse : SQLInventory {
 	int ClusterSize;
 
 protected:
-	struct restock_request {
-		struct component {
-			int item_id;
-			int units;
-		};
-		int max_components = 10;
-		std::string store;
-		float weight;
-		struct component** items;
-	};
 	class PQueue {
 		typedef struct Node {
 			struct restock_request* request;
@@ -381,43 +396,96 @@ protected:
 				return alpha;
 			}
 		}
+		void peek() {
+			std::cout << head->request->weight;
+		}
 	};
 public:
 	PQueue Requests;
 };
 
-class Store : SQLInventory, SQLTransactions, Warehouse {
+class Store : SQLDatabase, SQLInventory, SQLTransactions, Warehouse {
 	float* revenues;
 	int total_capacity = 1000;
 	float weight = 1.0;
 	float* location;
-	Warehouse supplier;
 	enum warehouse_request_type { UPDATE, SELECT };
+	Warehouse supplier;
+	float compute_restock_request_weight() {
+		restock_request* request = (restock_request*)malloc(sizeof(restock_request));
+		sqlite3* DBhandle;
+		sqlite3_stmt* sqlStmt;
+		float threshhold = 0.05;
+		std::string query = "SELECT STORENAME,PRICE,UNITS FROM transactions;";
 
-	float compute_weight(); // softmax algorithm?
+		sqlite3_open(SQLDatabase::wd, &DBhandle);
+		int exit = sqlite3_prepare(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
+		SQLDatabase::validatePrepareStmt(exit, DBhandle);
+		int store_total_units = 0;
+		float store_total_volume = 0;
+		int total_units = 0;
+		float total_volume = 0;
+		while (exit = sqlite3_step(sqlStmt) == SQLITE_ROW) {
+			int units = sqlite3_column_int(sqlStmt, 2);
+			float price = sqlite3_column_double(sqlStmt, 1);
+			total_units += units;
+			total_volume += price;
+			const char* store_name = (const char*)sqlite3_column_text(sqlStmt, 0);
+			if (name == store_name) {
+				store_total_units += units;
+				store_total_volume += price;
+			}
+		}
+		sqlite3_finalize(sqlStmt);
+		sqlite3_close(DBhandle);
+		float weight = (store_total_units * store_total_volume) / (total_units * total_volume);
+		return weight;
+	}
 
 public:
-	SQLInventory Inventory;
-	SQLTransactions StoreTransactions;
+	std::string name;
 	// optional user interface, automatic triggered once a day
-	restock_request* create_restock_request() {
-		// access the store inventory
-		// look for items that are low or out of stock
-		// create a restock request object and add items to it
-		// compute the weight of the request
-		// submit the request
-	}
-	int submit_restock_request(restock_request* request) { // submits restock_request object to a priority queue
+	int submit_restock_request() {
+		restock_request *request = (restock_request *)malloc(sizeof(restock_request));
+		//char buffer[16];
+		//request->store = name.copy(buffer, name.size() + 1);
+
+		//std::cout << request->store << std::endl;
+		sqlite3* DBhandle;
+		sqlite3_stmt* sqlStmt;
+		float threshhold = 0.05;
+		std::string query = "SELECT NAME, UNITS, CAPACITY FROM store_inventory;";
+
+		sqlite3_open(SQLDatabase::wd, &DBhandle);
+		int exit = sqlite3_prepare(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
+		SQLDatabase::validatePrepareStmt(exit, DBhandle);
+
+		while (exit = sqlite3_step(sqlStmt) == SQLITE_ROW) {
+			const char *name = (const char*)sqlite3_column_text(sqlStmt, 0);
+			float units = sqlite3_column_int(sqlStmt, 1);
+			float capacity = sqlite3_column_int(sqlStmt, 2);
+			float pStock = units / capacity;
+			std::cout << pStock << std::endl;
+			if (pStock < threshhold) {
+				int requested_units = capacity - units;
+				request->CreateComponent(name, requested_units);
+			}
+		}
+		sqlite3_finalize(sqlStmt);
+		sqlite3_close(DBhandle);
+		request->weight = compute_restock_request_weight();
 		supplier.Requests.enqueue(request);
+		supplier.Requests.peek();
+
 		return 0;
 	}
 	int local_transaction(newTransaction* record) {
-		StoreTransactions.updateTransactionCols();
+		SQLTransactions::updateTransactionCols();
 		Tcomponent* alpha = record->itemListHead;	
 		while (alpha != nullptr) {
 			// modify the store inventory
-			Inventory.updateUnit("store_inventory", -(alpha->itemunits), alpha->itemName, true);
-			StoreTransactions.insertRecord(record->store, record->storeid, record->transactionid, alpha);
+			SQLInventory::updateUnit("store_inventory", -(alpha->itemunits), alpha->itemName, true);
+			SQLTransactions::insertRecord(record->store, record->storeid, record->transactionid, alpha);
 			alpha = alpha->next;
 		}
 		return 0;
@@ -425,9 +493,9 @@ public:
 };
 
 int main() {
-	newItem itema = { "iron", "metal", 15.00, 1, 5000, 1310 };
-	newItem itemb = { "platinum", "metal", 15.00, 2, 500, 140 };
-	newItem itemc = { "aluminum", "metal", 15.00, 3, 500, 10 };
+	newItem itema = { "iron", "metal", 15.00, 1, 250, 15 };
+	newItem itemb = { "platinum", "metal", 15.00, 2, 250, 33 };
+	newItem itemc = { "aluminum", "metal", 15.00, 3, 250, 10 };
 
 	Tcomponent Tcmpc = { 6, 15.00, 3, "aluminum", nullptr };
 	Tcomponent Tcmpb = { 15, 15.00, 2, "platinum", &Tcmpc };
@@ -439,23 +507,25 @@ int main() {
 	//database.dropTable("items");
 	SQLInventory inventory;
 	Store store;
+	store.name = "tyrant";
 	SQLTransactions TCluster;
 	//inventory.createTable();
-
 	//inventory.showAll();
 	//database.dropTable("transactions");
+	//database.dropTable("store_inventory");
+
 	//TCluster.createTable("transactions");
-	//store.Inventory.createTable("store_inventory");
+	//inventory.createTable("store_inventory");
 
-	//store.Inventory.insertRecord("store_inventory", &itema);
-	//store.Inventory.insertRecord("store_inventory", &itemb);
-	//store.Inventory.insertRecord("store_inventory", &itemc);
-	database.showAllRecords("store_inventory");
+	//inventory.insertRecord("store_inventory", &itema);
+	//inventory.insertRecord("store_inventory", &itemb);
+	//inventory.insertRecord("store_inventory", &itemc);
 
-	store.local_transaction(&Transaction);
+	//database.showAllRecords("store_inventory");
+	//store.local_transaction(&Transaction);
 	database.showAllRecords("transactions");
-
 	database.showAllRecords("store_inventory");
+	store.submit_restock_request();
 
 	return 0;
 }
