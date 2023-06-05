@@ -138,10 +138,8 @@ typedef struct restock_request {
 		component *cmpnt = (component*)malloc(sizeof(component));
 		cmpnt->item_id = item_id;
 		cmpnt->units = units;
-		if (itemListHead == nullptr) {
-			itemListHead = cmpnt;
-			itemListHead->next = nullptr;
-		} else {
+		if (itemListHead == nullptr) itemListHead = cmpnt;
+		else {
 			cmpnt->next = itemListHead;
 			itemListHead = cmpnt;
 		}
