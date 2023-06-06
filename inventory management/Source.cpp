@@ -4,6 +4,7 @@
 #include <iostream>
 #include <iomanip>
 #include <windows.h>
+#include <cstdlib>
 #include <sqlite3.h>
 #include <string>
 #include <fmt/core.h>
@@ -570,16 +571,16 @@ int consumer_thread(Warehouse supplier, PQueue *Requests, int multiplier) {
 	store.store_id = 1337;
 	store.name = "tyrant";
 	int count = 0;
-	Tcomponent Tcmpa = { multiplier*1, 15.00, 2, "platinum", nullptr };
-
-	newTransaction Transaction = { &Tcmpa, 0, 0, (char*)"tyrant" };
 
 	while (true) {
+		Tcomponent Tcmpa = { multiplier * 1, 15.00, rand() % 3 + 1 , "platinum", nullptr };
+		newTransaction Transaction = { &Tcmpa, 0, 0, (char*)"tyrant" };
+
 		mutex.lock();
 		std::cout << "processing transaction" << std::endl;
 		store.local_transaction(&Transaction);
 		mutex.unlock();
-		database.queryDB("SELECT * FROM store_inventory WHERE ID = 2", database.callback, nullptr);
+		database.queryDB("SELECT * FROM store_inventory", database.callback, nullptr);
 		if (count % 5 == 0 && count >= 5) {
 			std::cout << "sending restock request" << std::endl;
 			mutex.lock();
@@ -588,7 +589,7 @@ int consumer_thread(Warehouse supplier, PQueue *Requests, int multiplier) {
 			std::cout << "sent restock request" << std::endl;
 
 		}
-		Sleep(500);
+		Sleep(100);
 		count++;
 	}
 	return 0;
