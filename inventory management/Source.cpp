@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <iostream>
 #include <iomanip>
+#include <windows.h>
 #include <sqlite3.h>
 #include <string>
 #include <fmt/core.h>
@@ -354,13 +355,14 @@ public:
 
 typedef struct PQueue {
 	int slots = 10;
+	int occupied_slots = 0;
 public:
 	Node* head;
 	int enqueue(restock_request* request) {
 		Node* NewNode = (Node*)malloc(sizeof(Node));
 		NewNode->request = request;
 		NewNode->weight = request->weight;
-		if (head == nullptr) {
+		if (head == nullptr || long(head) == long(0xcccccccccccccccc))  {
 			head = NewNode;
 		}
 		else {
@@ -385,7 +387,7 @@ public:
 		return 0;
 	}
 	restock_request* dequeue() {
-		if (head != nullptr && long(head) != long(0xcdcdcdcdcdcdcdcd)) {
+		if (head != nullptr && long(head) != long(0xcdcdcdcdcdcdcdcd) && long(head) != long(0xccccccccccccccc)) {
 			Node* alpha = head;
 			restock_request* request = alpha->request;
 			head = head->next;
@@ -394,10 +396,12 @@ public:
 		}
 	}
 	void peek() {
-		component* alpha = head->request->itemListHead;
-		while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
-			std::cout << "weight | " << head->request->weight << " item id | " << alpha->item_id << " units | " << alpha->units << std::endl;
-			alpha = alpha->next;
+		if (long(head) != long(0xcccccccccccccccc)) {
+			component* alpha = head->request->itemListHead;
+			while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
+				std::cout << "weight | " << head->request->weight << " item id | " << alpha->item_id << " units | " << alpha->units << std::endl;
+				alpha = alpha->next;
+			}
 		}
 	}
 };
@@ -407,23 +411,28 @@ class Warehouse : SQLInventory, SQLDatabase {
 	int ClusterSize;
 	SQLInventory wrhs_database;
 public:
-	PQueue PriorityQueue;
 
 	int process_restock_request(PQueue *Requests) {
-		restock_request* request = Requests->dequeue();
-		component* alpha = request->itemListHead;
-		while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
-			wrhs_database.updateUnit("inventory", -(alpha->units), alpha->item_id, true);
-			//SQLDatabase::showAllRecords("inventory");
-			alpha = alpha->next;
+		if (Requests->occupied_slots > 0) {
+			restock_request* request = Requests->dequeue();
+			Requests->occupied_slots--;
+			component* alpha = request->itemListHead;
+			while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
+				wrhs_database.updateUnit("inventory", -(alpha->units), alpha->item_id, true);
+				//SQLDatabase::showAllRecords("inventory");
+				alpha = alpha->next;
+			}
+			alpha = request->itemListHead;
+			while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
+				wrhs_database.updateUnit("store_inventory", alpha->units, alpha->item_id, true);
+				//SQLDatabase::showAllRecords("store_inventory");
+				alpha = alpha->next;
+			}
+			free(request);
+
+			return 1;
 		}
-		alpha = request->itemListHead;
-		while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
-			wrhs_database.updateUnit("store_inventory", alpha->units, alpha->item_id, true);
-			//SQLDatabase::showAllRecords("store_inventory");
-			alpha = alpha->next;
-		}
-		free(request);
+		
 		return 0;
 	}
 };
@@ -478,23 +487,29 @@ public:
 		sqlite3_open(SQLDatabase::wd, &DBhandle);
 		int exit = sqlite3_prepare(DBhandle, query.c_str(), (int)query.size() + 1, &sqlStmt, nullptr);
 		SQLDatabase::validatePrepareStmt(exit, DBhandle);
-
+		int item_count = 0;
 		while (exit = sqlite3_step(sqlStmt) == SQLITE_ROW) {
 			int item_id = sqlite3_column_int(sqlStmt, 0);
-			int units = sqlite3_column_int(sqlStmt, 1);
-			int capacity = sqlite3_column_int(sqlStmt, 2);
+			double units = sqlite3_column_int(sqlStmt, 1);
+			double capacity = sqlite3_column_int(sqlStmt, 2);
 			double pStock = units / capacity;
 			if (pStock <= threshhold) {
+				item_count++;
 				int requested_units = capacity - units;
+				std::cout << pStock << " item id" << item_id << std::endl;
 				request->CreateComponent(item_id, requested_units);
 			}
 		}
 		sqlite3_finalize(sqlStmt);
 		sqlite3_close(DBhandle);
 		request->weight = compute_restock_request_weight();
-		Requests->enqueue(request);
-		Requests->peek();
-
+		if (item_count > 0) {
+			Requests->enqueue(request);
+			Requests->occupied_slots++;
+		}
+		else {
+			free(request);
+		}
 		return 0;
 	}
 	int local_transaction(newTransaction* record) {
@@ -510,46 +525,74 @@ public:
 	}
 };
 
+std::mutex mutex;
+
+int consumer_thread(Warehouse supplier, PQueue *Requests) {
+	SQLDatabase database;
+	Store store;
+	store.name = "tyrant";
+	int count = 0;
+	Tcomponent Tcmpa = { 1, 15.00, 2, "platinum", nullptr };
+
+	newTransaction Transaction = { &Tcmpa, 0, 0, (char*)"tyrant" };
+
+	while (true) {
+		mutex.lock();
+		std::cout << "processing transaction" << std::endl;
+		store.local_transaction(&Transaction);
+		mutex.unlock();
+		database.queryDB("SELECT * FROM store_inventory WHERE ID = 2", database.callback, nullptr);
+		if (count % 5 == 0 && count >= 5) {
+			std::cout << "sending restock request" << std::endl;
+			mutex.lock();
+			store.submit_restock_request(Requests);
+			mutex.unlock();
+		}
+		Sleep(500);
+		count++;
+	}
+	return 0;
+}
+
+int supplier_thread(Warehouse supplier, PQueue *Requests) {
+	SQLDatabase database;
+	int count = 0;
+	while (true) {
+		if (count % 6 == 0 && count >= 6) {
+			mutex.lock();
+			std::cout << "processing restock request" << std::endl;
+			supplier.process_restock_request(Requests);
+			mutex.unlock();
+			database.showAllRecords("inventory");
+			std::cout << std::endl;
+			database.showAllRecords("store_inventory");
+
+		}
+		Sleep(500);
+
+		count++;
+	}
+	return 0;
+}
+
 int main() {
+	Warehouse supplier;
+	PQueue Requests;
+
+	
 	newItem itema = { "iron", "metal", 15.00, 1, 250, 0 };
 	newItem itemb = { "platinum", "metal", 15.00, 2, 250, 0 };
 	newItem itemc = { "aluminum", "metal", 15.00, 3, 250, 0 };
 
-	Tcomponent Tcmpc = { 6, 15.00, 3, "aluminum", nullptr };
-	Tcomponent Tcmpb = { 15, 15.00, 2, "platinum", &Tcmpc };
-	Tcomponent Tcmpa = { 5, 15.00, 1, "iron", &Tcmpb };
 
-	newTransaction Transaction = { &Tcmpa, 0, 0, (char*)"tyrant" };
-
-	SQLDatabase database;
-	//database.dropTable("items");
 	SQLInventory inventory;
-	Store store;
-	Warehouse supplier;
-	store.name = "tyrant";
 	SQLTransactions TCluster;
-	//inventory.createTable();
-	//inventory.showAll();
-	//database.dropTable("transactions");
-	database.dropTable("store_inventory");
-
-	//TCluster.createTable("transactions");
-	inventory.createTable("store_inventory");
-	inventory.insertRecord("store_inventory", &itema);
-	inventory.insertRecord("store_inventory", &itemb);
-	inventory.insertRecord("store_inventory", &itemc);
 	
-	database.showAllRecords("store_inventory");
-	database.showAllRecords("inventory");
-
-	//database.showAllRecords("transactions");
-	//database.showAllRecords("inventory");
-	//database.showAllRecords("store_inventory");
-	store.submit_restock_request(&supplier.PriorityQueue);
-	supplier.process_restock_request(&supplier.PriorityQueue);
-	store.local_transaction(&Transaction);
-	database.showAllRecords("store_inventory");
-	database.showAllRecords("inventory");
-	//database.showAllRecords("inventory");
+	inventory.updateUnit("store_inventory", 25, 2);
+	///
+	std::thread storea(consumer_thread, supplier, &Requests);
+	std::thread warehouse(supplier_thread, supplier, &Requests);
+	storea.join();
+	warehouse.join();
 	return 0;
 }
