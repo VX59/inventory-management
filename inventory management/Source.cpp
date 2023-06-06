@@ -36,7 +36,7 @@ public:
 		}
 	}
 	static void validatestep(int ret, sqlite3* DBhandle) {
-		if (ret != SQLITE_DONE) {
+		if (ret != SQLITE_DONE && ret != SQLITE_ROW) {
 			sqlite3_close(DBhandle);
 			std::cerr << "failed to execute query";
 			exit(-1);
@@ -76,7 +76,7 @@ public:
 		return 0;
 	}
 	int dropTable(std::string table) {
-		char* messageError = (char*)malloc(1024);
+		char* messageError;
 		std::string query = "DROP TABLE " + table + ";";
 		int exit = queryDB(query, NULL, messageError);
 		return 0;
@@ -127,31 +127,33 @@ typedef struct newItem {
 	float UNITS;
 };
 
-typedef struct component {
+class component {
 public:
 	int item_id;
 	int units;
 	component* next;
 };
 
-typedef struct restock_request {
+class restock_request {
 public:
-	struct component* itemListHead;
+	int components = 0;
+	component* itemListHead;
 	int CreateComponent(int item_id, int units) {
 		component *cmpnt = (component*)malloc(sizeof(component));
 		cmpnt->item_id = item_id;
 		cmpnt->units = units;
-		if (itemListHead == nullptr) {
+		if (components == 0) {
 			itemListHead = cmpnt;
 			itemListHead->next = nullptr;
 		} else {
 			cmpnt->next = itemListHead;
 			itemListHead = cmpnt;
 		}
+		components++;
 		return 0;
 	}
 	int max_components = 10;
-	std::string store;
+	int store_id;
 	float weight;
 };
 
@@ -168,7 +170,7 @@ public:
 			"CATEGORY TEXT)";
 
 		try {
-			char* messageError = (char*)malloc(64);
+			char* messageError;
 			int exit = queryDB(query, callback, messageError);
 
 			if (exit != SQLITE_OK) {
@@ -208,19 +210,35 @@ public:
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "UPDATE "+table+" SET UNITS = ?1 WHERE ID = ?2;";
-		std::string incr_query = "UPDATE "+table+" SET UNITS = UNITS + ?1 WHERE ID = ?2";
-		if (incr == true) exit = sqlite3_prepare_v2(DBhandle, incr_query.c_str(), incr_query.size() + 1, &sqlStmt, nullptr);
-		else exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
+		std::string query = "SELECT * FROM " + table + " WHERE ID = ?1;";
+		std::cout << query << std::endl;
+		exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		validatePrepareStmt(exit, DBhandle);
-
-		sqlite3_bind_int(sqlStmt, 1, newval);
-		sqlite3_bind_int(sqlStmt, 2, condval);
-
+		std::cout << condval << std::endl;
+		sqlite3_bind_int(sqlStmt, 1, condval);
 		exit = sqlite3_step(sqlStmt);
 		validatestep(exit, DBhandle);
+		int units = sqlite3_column_int(sqlStmt, 2);
 		sqlite3_finalize(sqlStmt);
-		sqlite3_close(DBhandle);
+
+		std::cout << units << std::endl;
+		if (units + newval >= 0) {
+			query = "UPDATE " + table + " SET UNITS = ?1 WHERE ID = ?2;";
+			std::string incr_query = "UPDATE " + table + " SET UNITS = UNITS + ?1 WHERE ID = ?2";
+			if (incr == true) exit = sqlite3_prepare_v2(DBhandle, incr_query.c_str(), incr_query.size() + 1, &sqlStmt, nullptr);
+			else exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
+			validatePrepareStmt(exit, DBhandle);
+
+			sqlite3_bind_int(sqlStmt, 1, newval);
+			sqlite3_bind_int(sqlStmt, 2, condval);
+
+			exit = sqlite3_step(sqlStmt);
+			validatestep(exit, DBhandle);
+			sqlite3_finalize(sqlStmt);
+			sqlite3_close(DBhandle);
+
+			return 1;
+		}
 		return 0;
 	}
 	int updatePrice(std::string table, float newval, const char* condval, bool incr = false) {
@@ -244,19 +262,19 @@ public:
 
 		return 0;
 	}
-	int updateCapacity(std::string table, int newval, const char* condval, bool incr = false) {
+	int updateCapacity(std::string table, int newval, int condval, bool incr = false) {
 		char* messageError;
 		sqlite3* DBhandle;
 		int exit = sqlite3_open(wd, &DBhandle);
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "UPDATE " + table + " SET CAPACITY = ?1 WHERE NAME = ?2;";
-		std::string incr_query = "UPDATE " + table + " SET CAPACITY = UNITS + ?1 WHERE NAME = ?2";
+		std::string query = "UPDATE " + table + " SET CAPACITY = ?1 WHERE ID = ?2;";
+		std::string incr_query = "UPDATE " + table + " SET CAPACITY = UNITS + ?1 WHERE ID = ?2";
 		if (incr == true) exit = sqlite3_prepare_v2(DBhandle, incr_query.c_str(), incr_query.size() + 1, &sqlStmt, nullptr);
 		else exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		validatePrepareStmt(exit, DBhandle);
 
 		sqlite3_bind_int(sqlStmt, 1, newval);
-		sqlite3_bind_text(sqlStmt, 2, condval, -1, NULL);
+		sqlite3_bind_int(sqlStmt, 2, condval);
 
 		exit = sqlite3_step(sqlStmt);
 		validatestep(exit, DBhandle);
@@ -318,7 +336,7 @@ public:
 	}
 
 	int updateTransactionCols() {
-		char* messageError = (char*)malloc(32);
+		char* messageError;
 		sqlite3* DBhandle;
 		sqlite3_stmt* sqlStmt = nullptr;
 		std::string query = "SELECT * FROM store_inventory";
@@ -358,11 +376,30 @@ typedef struct PQueue {
 	int occupied_slots = 0;
 public:
 	Node* head;
+
+	int check_duplicates(restock_request* request) {
+		if (occupied_slots == 0) {
+			return 0;
+		}
+		Node* alpha = head;
+		while (alpha != nullptr && long(alpha) != long(0xcccccccccccccccc) && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
+			if (alpha->request->store_id == request->store_id) {
+				return -1;
+			}
+			alpha = alpha->next;
+		}
+		return 0;
+	}
+
 	int enqueue(restock_request* request) {
+
+		if (check_duplicates(request) != 0) return -1;
+
 		Node* NewNode = (Node*)malloc(sizeof(Node));
 		NewNode->request = request;
 		NewNode->weight = request->weight;
-		if (head == nullptr || long(head) == long(0xcccccccccccccccc))  {
+
+		if (occupied_slots == 0)  {
 			head = NewNode;
 		}
 		else {
@@ -384,19 +421,21 @@ public:
 				}
 			}
 		}
+		occupied_slots++;
 		return 0;
 	}
 	restock_request* dequeue() {
-		if (head != nullptr && long(head) != long(0xcdcdcdcdcdcdcdcd) && long(head) != long(0xccccccccccccccc)) {
+		if (occupied_slots > 0) {
 			Node* alpha = head;
 			restock_request* request = alpha->request;
 			head = head->next;
+			occupied_slots--;
 			free(alpha);
 			return request;
 		}
 	}
 	void peek() {
-		if (long(head) != long(0xcccccccccccccccc)) {
+		if (occupied_slots > 0) {
 			component* alpha = head->request->itemListHead;
 			while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
 				std::cout << "weight | " << head->request->weight << " item id | " << alpha->item_id << " units | " << alpha->units << std::endl;
@@ -413,25 +452,23 @@ class Warehouse : SQLInventory, SQLDatabase {
 public:
 
 	int process_restock_request(PQueue *Requests) {
-		if (Requests->occupied_slots > 0) {
-			restock_request* request = Requests->dequeue();
-			Requests->occupied_slots--;
-			component* alpha = request->itemListHead;
-			while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
-				wrhs_database.updateUnit("inventory", -(alpha->units), alpha->item_id, true);
-				//SQLDatabase::showAllRecords("inventory");
-				alpha = alpha->next;
-			}
-			alpha = request->itemListHead;
-			while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
-				wrhs_database.updateUnit("store_inventory", alpha->units, alpha->item_id, true);
-				//SQLDatabase::showAllRecords("store_inventory");
-				alpha = alpha->next;
-			}
-			free(request);
-
-			return 1;
+		if (Requests->occupied_slots == 0) {
+			return -1;
 		}
+		restock_request* request = Requests->dequeue();
+		component* alpha = request->itemListHead;
+		while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
+			wrhs_database.updateUnit("inventory", -(alpha->units), alpha->item_id, true);
+			//SQLDatabase::showAllRecords("inventory");
+			alpha = alpha->next;
+		}
+		alpha = request->itemListHead;
+		while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
+			wrhs_database.updateUnit("store_inventory", alpha->units, alpha->item_id, true);
+			//SQLDatabase::showAllRecords("store_inventory");
+			alpha = alpha->next;
+		}
+		free(request);
 		
 		return 0;
 	}
@@ -449,9 +486,9 @@ class Store : SQLDatabase, SQLInventory, SQLTransactions, Warehouse {
 		sqlite3_open(SQLDatabase::wd, &DBhandle);
 		int exit = sqlite3_prepare(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		SQLDatabase::validatePrepareStmt(exit, DBhandle);
-		int store_total_units = 0;
+		float store_total_units = 0;
 		float store_total_volume = 0;
-		int total_units = 0;
+		float total_units = 0;
 		float total_volume = 0;
 		while (exit = sqlite3_step(sqlStmt) == SQLITE_ROW) {
 			int units = sqlite3_column_int(sqlStmt, 2);
@@ -471,10 +508,12 @@ class Store : SQLDatabase, SQLInventory, SQLTransactions, Warehouse {
 	}
 
 public:
+	int store_id;
 	std::string name;
 	// optional user interface, automatic triggered once a day
-	int submit_restock_request(PQueue *Requests) {
+	int submit_restock_request(int store_id, PQueue *Requests) {
 		restock_request *request = (restock_request *)malloc(sizeof(restock_request));
+		request->store_id = store_id;
 		//char buffer[16];
 		//request->store = name.copy(buffer, name.size() + 1);
 
@@ -487,25 +526,23 @@ public:
 		sqlite3_open(SQLDatabase::wd, &DBhandle);
 		int exit = sqlite3_prepare(DBhandle, query.c_str(), (int)query.size() + 1, &sqlStmt, nullptr);
 		SQLDatabase::validatePrepareStmt(exit, DBhandle);
-		int item_count = 0;
+		request->components = 0;
 		while (exit = sqlite3_step(sqlStmt) == SQLITE_ROW) {
 			int item_id = sqlite3_column_int(sqlStmt, 0);
 			double units = sqlite3_column_int(sqlStmt, 1);
 			double capacity = sqlite3_column_int(sqlStmt, 2);
 			double pStock = units / capacity;
 			if (pStock <= threshhold) {
-				item_count++;
 				int requested_units = capacity - units;
-				std::cout << pStock << " item id" << item_id << std::endl;
+				std::cout << pStock << " item id " << item_id << " requested units " <<  requested_units << std::endl;
 				request->CreateComponent(item_id, requested_units);
 			}
 		}
 		sqlite3_finalize(sqlStmt);
 		sqlite3_close(DBhandle);
-		request->weight = compute_restock_request_weight();
-		if (item_count > 0) {
+		if (request->components > 0) {
+			request->weight = compute_restock_request_weight();
 			Requests->enqueue(request);
-			Requests->occupied_slots++;
 		}
 		else {
 			free(request);
@@ -527,12 +564,13 @@ public:
 
 std::mutex mutex;
 
-int consumer_thread(Warehouse supplier, PQueue *Requests) {
+int consumer_thread(Warehouse supplier, PQueue *Requests, int multiplier) {
 	SQLDatabase database;
 	Store store;
+	store.store_id = 1337;
 	store.name = "tyrant";
 	int count = 0;
-	Tcomponent Tcmpa = { 1, 15.00, 2, "platinum", nullptr };
+	Tcomponent Tcmpa = { multiplier*1, 15.00, 2, "platinum", nullptr };
 
 	newTransaction Transaction = { &Tcmpa, 0, 0, (char*)"tyrant" };
 
@@ -545,8 +583,10 @@ int consumer_thread(Warehouse supplier, PQueue *Requests) {
 		if (count % 5 == 0 && count >= 5) {
 			std::cout << "sending restock request" << std::endl;
 			mutex.lock();
-			store.submit_restock_request(Requests);
+			store.submit_restock_request(store.store_id, Requests);
 			mutex.unlock();
+			std::cout << "sent restock request" << std::endl;
+
 		}
 		Sleep(500);
 		count++;
@@ -558,11 +598,13 @@ int supplier_thread(Warehouse supplier, PQueue *Requests) {
 	SQLDatabase database;
 	int count = 0;
 	while (true) {
-		if (count % 6 == 0 && count >= 6) {
+		if (Requests->occupied_slots > 0) {
 			mutex.lock();
 			std::cout << "processing restock request" << std::endl;
 			supplier.process_restock_request(Requests);
 			mutex.unlock();
+			std::cout << "processed restock request" << std::endl;
+
 			database.showAllRecords("inventory");
 			std::cout << std::endl;
 			database.showAllRecords("store_inventory");
@@ -578,7 +620,7 @@ int supplier_thread(Warehouse supplier, PQueue *Requests) {
 int main() {
 	Warehouse supplier;
 	PQueue Requests;
-
+	SQLDatabase database;
 	
 	newItem itema = { "iron", "metal", 15.00, 1, 250, 0 };
 	newItem itemb = { "platinum", "metal", 15.00, 2, 250, 0 };
@@ -587,10 +629,15 @@ int main() {
 
 	SQLInventory inventory;
 	SQLTransactions TCluster;
-	
-	inventory.updateUnit("store_inventory", 25, 2);
+
+	//inventory.updateCapacity("store_inventory", 50, 2);
+	inventory.updateUnit("inventory", 1000, 2);
+	inventory.updateUnit("store_inventory", 20, 2);
+	//database.showAllRecords("store_inventory");
+	//database.showAllRecords("inventory");
+
 	///
-	std::thread storea(consumer_thread, supplier, &Requests);
+	std::thread storea(consumer_thread, supplier, &Requests,3);
 	std::thread warehouse(supplier_thread, supplier, &Requests);
 	storea.join();
 	warehouse.join();
