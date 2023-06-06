@@ -5,7 +5,6 @@
 #include <iomanip>
 #include <sqlite3.h>
 #include <string>
-#include <fmt/core.h>
 #include <thread>
 #include <chrono>
 #include <mutex>
@@ -21,8 +20,7 @@ public:
 					value = "";
 			else
 				value = argv[i];
-
-				std::cout << fmt::format("|{}: {:<{}}", asColName[i], value, 12);
+				std::cout << asColName[i] << " " << value << std::endl;
 		}
 		std::cout << std::endl;
 		return 0;
@@ -133,22 +131,9 @@ typedef struct component {
 };
 
 typedef struct restock_request {
-	struct component* itemListHead = nullptr;
-	int CreateComponent(int item_id, int units) {
-		component *cmpnt = (component*)malloc(sizeof(component));
-		cmpnt->item_id = item_id;
-		cmpnt->units = units;
-		if (itemListHead == nullptr) {
-			itemListHead = cmpnt;
-			itemListHead->next = nullptr;
-		} else {
-			cmpnt->next = itemListHead;
-			itemListHead = cmpnt;
-		}
-		return 0;
-	}
+	component *itemListHead = nullptr;
 	int max_components = 10;
-	std::string store;
+	int store_id;
 	float weight;
 };
 
@@ -349,69 +334,71 @@ public:
 	}
 };
 
+typedef struct PQueue {
+	typedef struct Node {
+		struct restock_request* request;
+		float weight;
+		Node* next = nullptr;
+	};
+	Node *head = nullptr;
+	int slots = 10;
+
+	int enqueue(restock_request* request) {
+		Node* NewNode = (Node*)malloc(sizeof(Node));
+		if (NewNode == nullptr) {
+			std::cerr << "failed to allocate memory" << std::endl;
+			exit(-1);
+		}
+		NewNode->request = request;
+		NewNode->weight = request->weight;
+		if (head == nullptr || (long)head == (long)0xcdcdcdcdcdcdcdcd) {
+			head = NewNode;
+		}
+		else {
+			if (NewNode->weight > head->weight) {
+				NewNode->next = head;
+				head = NewNode;
+
+			}
+			else {
+				Node* alpha = head;
+				while (NewNode->weight < alpha->weight) {
+					if (alpha->next != nullptr && NewNode->weight > alpha->next->weight) {
+						NewNode->next = alpha->next;
+						alpha->next = NewNode;
+					}
+					if (alpha->next == nullptr) {
+						alpha->next = NewNode;
+					}
+					alpha = alpha->next;
+				}
+			}
+		}
+		return 0;
+	}
+	restock_request* dequeue() {
+		if (head != nullptr) {
+			Node* alpha = head;
+			head = head->next;
+			return alpha->request;
+		}
+	}
+	void peek() {
+		component* alpha = head->request->itemListHead;
+		while (alpha != nullptr) {
+			std::cout << "item id: " << alpha->item_id << "| item units:" << alpha->units << std::endl;
+			alpha = alpha->next;
+		}
+	}
+};
+
 class Warehouse : SQLInventory, SQLTransactions, SQLDatabase {
 	int total_capacity;
 	int ClusterSize;
-
-protected:
-	class PQueue {
-		typedef struct Node {
-			struct restock_request* request;
-			float weight;
-			Node* next = nullptr;
-		};
-		Node* head = nullptr;
-		int slots = 10;
-
-	public:
-		int enqueue(struct restock_request* request) {
-			Node* NewNode = (Node*)malloc(sizeof(Node));
-			NewNode->request = request;
-			NewNode->weight = request->weight;
-			if (head == nullptr) {
-				head = NewNode;
-			}
-			else {
-				if (NewNode->weight > head->weight) {
-					NewNode->next = head;
-					head = NewNode;
-				}
-				else {
-					Node* alpha = head;
-					while (NewNode->weight < alpha->weight) {
-						if (alpha->next != nullptr && NewNode->weight > alpha->next->weight) {
-							NewNode->next = alpha->next;
-							alpha->next = NewNode;
-						}
-						if (alpha->next == nullptr) {
-							alpha->next = NewNode;
-						}
-						alpha = alpha->next;
-					}
-				}
-			}
-			return 0;
-		}
-		restock_request* dequeue() {
-			if (head != nullptr) {
-				Node* alpha = head;
-				head = head->next;
-				return alpha->request;
-			}
-		}
-		void peek() {
-			std::cout << head->request->weight << std::endl;
-			component* alpha = head->request->itemListHead;
-			while (alpha != nullptr) {
-				std::cout << alpha->item_id << " " << alpha->units << std::endl;
-				alpha = alpha->next;
-			}
-		}
-	};
 public:
-	PQueue Requests;
+	PQueue* Requests;
 	int process_restock_request() {
-		restock_request* request = Requests.dequeue();
+		restock_request* request = Requests->dequeue();
 		component* alpha = request->itemListHead;
 		while (alpha != nullptr) {
 			std::cout << "test" << std::endl;
@@ -420,12 +407,15 @@ public:
 			SQLDatabase::showAllRecords("inventory");
 			alpha = alpha->next;
 		}
+		/*
 		alpha = request->itemListHead;
+
 		while (alpha != nullptr) {
 			SQLInventory::updateUnit("store_inventory", alpha->units, alpha->item_id, true);
 			SQLDatabase::showAllRecords("store_inventory");
 			alpha = alpha->next;
 		}
+		*/
 
 		return 0;
 	}
@@ -436,14 +426,15 @@ class Store : SQLDatabase, SQLInventory, SQLTransactions, Warehouse {
 	int total_capacity = 1000;
 	float weight = 1.0;
 	float* location;
+	int id;
 	enum warehouse_request_type { UPDATE, SELECT };
 	Warehouse supplier;
+
 	float compute_restock_request_weight() {
-		restock_request* request = (restock_request*)malloc(sizeof(restock_request));
 		sqlite3* DBhandle;
 		sqlite3_stmt* sqlStmt;
 		float threshhold = 0.05;
-		std::string query = "SELECT STORENAME,PRICE,UNITS FROM transactions;";
+		std::string query = "SELECT STOREID, PRICE, UNITS FROM transactions;";
 
 		sqlite3_open(SQLDatabase::wd, &DBhandle);
 		int exit = sqlite3_prepare(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
@@ -457,8 +448,8 @@ class Store : SQLDatabase, SQLInventory, SQLTransactions, Warehouse {
 			float price = sqlite3_column_double(sqlStmt, 1);
 			total_units += units;
 			total_volume += price;
-			const char* store_name = (const char*)sqlite3_column_text(sqlStmt, 0);
-			if (name == store_name) {
+			int store_id = sqlite3_column_int(sqlStmt, 0);
+			if (id == store_id) {
 				store_total_units += units;
 				store_total_volume += price;
 			}
@@ -472,8 +463,12 @@ class Store : SQLDatabase, SQLInventory, SQLTransactions, Warehouse {
 public:
 	std::string name;
 	// optional user interface, automatic triggered once a day
-	int submit_restock_request() {
+	int submit_restock_request(PQueue* Requests) {
 		restock_request *request = (restock_request *)malloc(sizeof(restock_request));
+		if (request == nullptr) {
+			std::cerr << "failed to allocate memory" << std::endl;
+			exit(-1);
+		}
 		//char buffer[16];
 		//request->store = name.copy(buffer, name.size() + 1);
 
@@ -492,18 +487,24 @@ public:
 			float units = sqlite3_column_int(sqlStmt, 1);
 			float capacity = sqlite3_column_int(sqlStmt, 2);
 			float pStock = units / capacity;
-			std::cout << pStock << std::endl;
 			if (pStock <= threshhold) {
+				component* restock_item = (component*)malloc(sizeof(component));
 				int requested_units = capacity - units;
-				std::cout << requested_units << std::endl;
-				request->CreateComponent(item_id, requested_units);
+				restock_item->item_id = item_id;
+				restock_item->units = requested_units;
+				if (request->itemListHead == nullptr) {
+					request->itemListHead = restock_item;
+				}
+				else {
+					restock_item->next = request->itemListHead;
+					request->itemListHead = restock_item;
+				}
 			}
 		}
 		sqlite3_finalize(sqlStmt);
 		sqlite3_close(DBhandle);
 		request->weight = compute_restock_request_weight();
-		supplier.Requests.enqueue(request);
-		supplier.Requests.peek();
+		Requests->enqueue(request);
 
 		return 0;
 	}
@@ -536,7 +537,7 @@ int main() {
 	SQLInventory inventory;
 	Store store;
 	Warehouse supplier;
-	store.name = "tyrant";
+	supplier.Requests = (PQueue*)malloc(sizeof(PQueue));
 	SQLTransactions TCluster;
 	//inventory.createTable();
 	//inventory.showAll();
@@ -555,11 +556,13 @@ int main() {
 	//database.showAllRecords("transactions");
 	//database.showAllRecords("store_inventory");
 	//database.showAllRecords("inventory");
-
-	store.submit_restock_request();
-	supplier.process_restock_request();
 	database.showAllRecords("store_inventory");
 	database.showAllRecords("inventory");
+	store.submit_restock_request(supplier.Requests);
+	//supplier.process_restock_request();
+	supplier.Requests->peek();
+	//database.showAllRecords("store_inventory");
+	//database.showAllRecords("inventory");
 
 	return 0;
 }
