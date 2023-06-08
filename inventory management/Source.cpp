@@ -303,7 +303,7 @@ public:
 		char* messageError;
 		sqlite3* DBhandle;
 		sqlite3_stmt* sqlStmt = nullptr;
-		std::string query = "SELECT * FROM "+table;
+		std::string query = "SELECT * FROM " + table;
 		sqlite3_open(wd, &DBhandle);
 		int exit = sqlite3_prepare_v2(DBhandle, query.c_str(), query.size() + 1, &sqlStmt, nullptr);
 		validatePrepareStmt(exit, DBhandle);
@@ -356,7 +356,7 @@ public:
 	}
 	float weight;
 	int store_id;
-	char * table_name;
+	char* table_name;
 	int max_components = 10;
 };
 
@@ -395,7 +395,7 @@ public:
 		NewNode->request = request;
 		NewNode->weight = request->weight;
 
-		if (occupied_slots == 0) {
+		if (occupied_slots == 0 || long(head) == long(0xcdcdcdcdcdcdcdcd)) {
 			head = NewNode;
 		}
 		else {
@@ -405,7 +405,7 @@ public:
 			}
 			else {
 				Node* alpha = head;
-				while (NewNode->weight < alpha->weight) {
+				while (long(alpha) != long(0xcdcdcdcdcdcdcdcd) && NewNode->weight < alpha->weight) {
 					if (alpha->next != nullptr && NewNode->weight > alpha->next->weight) {
 						NewNode->next = alpha->next;
 						alpha->next = NewNode;
@@ -421,7 +421,7 @@ public:
 		return 0;
 	}
 	restock_request* dequeue() {
-		if (occupied_slots > 0) {
+		if (occupied_slots > 0 || long(head) == long(0xcdcdcdcdcdcdcdcd)) {
 			Node* alpha = head;
 			restock_request* request = alpha->request;
 			head = head->next;
@@ -431,7 +431,7 @@ public:
 		}
 	}
 	void peek() {
-		if (occupied_slots > 0) {
+		if (occupied_slots > 0 || long(head) == long(0xcdcdcdcdcdcdcdcd)) {
 			component* alpha = head->request->itemListHead;
 			while (alpha != nullptr && long(alpha) != long(0xcdcdcdcdcdcdcdcd)) {
 				std::cout << "weight | " << head->request->weight << " item id | " << alpha->item_id << " units | " << alpha->units << std::endl;
@@ -447,7 +447,7 @@ class Warehouse : SQLInventory, SQLDatabase {
 	SQLInventory wrhs_database;
 public:
 
-	int process_restock_request(PQueue* Requests, std::recursive_mutex *mutex) {
+	int process_restock_request(PQueue* Requests, std::recursive_mutex* mutex) {
 		if (Requests->occupied_slots == 0) {
 			return -1;
 		}
@@ -517,7 +517,7 @@ public:
 		sqlite3* DBhandle;
 		sqlite3_stmt* sqlStmt;
 		double threshhold = 0.05;
-		std::string query = "SELECT ID, UNITS, CAPACITY FROM "+table_name+";";
+		std::string query = "SELECT ID, UNITS, CAPACITY FROM " + table_name + ";";
 		std::cout << query << std::endl;
 
 		sqlite3_open(SQLDatabase::wd, &DBhandle);
@@ -564,19 +564,19 @@ public:
 
 std::recursive_mutex mutex;
 
-int consumer_thread(Store *store, PQueue* Requests, int multiplier, int freq) {
+int consumer_thread(Store* store, PQueue* Requests, int multiplier, int freq) {
 	SQLDatabase database;
 
 	int count = 0;
 
 	while (true) {
 		Tcomponent Tcmpa = { multiplier * 1, 15.00, 2 , "platinum", nullptr };
-		newTransaction Transaction = { &Tcmpa, 0, 0, (char*)store->name.c_str()};
+		newTransaction Transaction = { &Tcmpa, 0, 0, (char*)store->name.c_str() };
 
 		mutex.lock();
 		std::cout << "processing transaction" << std::endl;
 		store->local_transaction(&Transaction);
-		database.queryDB("SELECT * FROM "+store->table_name, database.callback);
+		database.queryDB("SELECT * FROM " + store->table_name, database.callback);
 		if (count % 5 == 0 && count >= 5) {
 			std::cout << "sending restock request" << std::endl;
 			store->submit_restock_request(Requests, &mutex);
@@ -584,13 +584,13 @@ int consumer_thread(Store *store, PQueue* Requests, int multiplier, int freq) {
 
 		}
 		mutex.unlock();
-		Sleep(100/freq);
+		Sleep(100 / freq);
 		count++;
 	}
 	return 0;
 }
 
-int supplier_thread(Warehouse *supplier, PQueue* Requests) {
+int supplier_thread(Warehouse* supplier, PQueue* Requests) {
 	SQLDatabase database;
 	int count = 0;
 	while (true) {
@@ -651,8 +651,8 @@ int main() {
 	//database.showAllRecords("inventory");
 
 	///
-	std::thread storeA(consumer_thread, &store, &Requests, 3,2);
-	std::thread storeB(consumer_thread, &storeb, &Requests, 2,4);
+	std::thread storeA(consumer_thread, &store, &Requests, 3, 2);
+	std::thread storeB(consumer_thread, &storeb, &Requests, 2, 4);
 
 	std::thread warehouse(supplier_thread, &supplier, &Requests);
 	storeA.join();
